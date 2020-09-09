@@ -28,5 +28,6 @@ before_script:
   - psql -c 'CREATE EXTENSION citext;' -U postgres template1
   - psql -c 'CREATE DATABASE travisci;' -U postgres
   - python manage.py migrate
+  - python manage.py makemigrations --check
 script:
   - python manage.py test
