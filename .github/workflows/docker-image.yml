@@ -40,11 +40,29 @@ jobs:
           -S /app=app -S /etc/profile=etc/profile
           --entry-point=bin/mreg-wrapper
           -m ./ci/manifest.scm
-      - name: Upload artifact
+      - name: Upload Docker image
         uses: actions/upload-artifact@v2
         with:
           name: mreg-docker.tar.gz
           path: mreg-docker.tar.gz
+      # While we have Guix, save mreg-cli and its tests for later use.
+      - name: Pack mreg-cli
+        run: guix pack --fallback -RR --root=mreg-cli.tar.gz -S /bin=bin mreg-cli
+      - name: Upload mreg-cli
+        uses: actions/upload-artifact@v2
+        with:
+          name: mreg-cli.tar.gz
+          path: mreg-cli.tar.gz
+      - name: Extract test suite
+        run: |
+          # For some reason upload path can not contain a symlink, so copy it first.
+          SOURCE=$(guix build --root=mreg-cli --source mreg-cli)
+          cp -L $SOURCE/testsuite testsuite
+      - name: Upload mreg-cli testsuite
+        uses: actions/upload-artifact@v2
+        with:
+          name: testsuite
+          path: testsuite
 
   publish:
     name: Publish
@@ -70,3 +88,66 @@ jobs:
 
           docker tag mreg-wrapper-mreg-python-wrapper:latest $IMAGE_ID:latest
           docker push $IMAGE_ID:latest
+
+  test:
+    name: Test
+    needs: publish
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        postgresql-version: [13]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgresql-version }}
+        env:
+          POSTGRES_USER: mreg
+          POSTGRES_DB: mreg
+          POSTGRES_PASSWORD: postgres
+        # Add health checks and trick it into creating the citext
+        # extension when ready.
+        options: >-
+          --health-cmd "pg_isready && PGPASSWORD=$POSTGRES_PASSWORD psql -U mreg -c 'CREATE EXTENSION IF NOT EXISTS citext;' mreg || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      mreg:
+        image: ghcr.io/${{ github.repository_owner }}/mreg:latest
+        options: >-
+          --name mreg
+        env:
+          GUNICORN_ARGS: --bind=0.0.0.0
+          MREG_DB_HOST: postgres
+          MREG_DB_PASSWORD: postgres
+        ports:
+          - 8000:8000
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: mreg-cli.tar.gz
+      - name: Unpack mreg-cli
+        run: |
+          tar -xf mreg-cli.tar.gz -C ${{ runner.temp }}
+          echo "${{ runner.temp }}/bin" >> $GITHUB_PATH
+      - name: Unpack test suite
+        uses: actions/download-artifact@v2
+        with:
+          name: testsuite
+      - name: Create superuser
+        run: |
+          echo -ne '
+          from django.conf import settings
+          from django.contrib.auth import get_user_model
+          from django.contrib.auth.models import Group
+          user = get_user_model().objects.create_user(
+            username="ci",password="test")
+          user.groups.clear()
+          su = getattr(settings, "SUPERUSER_GROUP", None)
+          group, created = Group.objects.get_or_create(name=su)
+          group.user_set.add(user)
+          ' | docker exec -e MREG_DB_PASSWORD=postgres -e MREG_DB_HOST=postgres \
+                -i mreg python /app/manage.py shell
+      - name: Run tests
+        run: >
+          echo -ne 'test\nsource testsuite\nquit\n'
+          | mreg-cli -u ci -d example.org --url http://localhost:8000
