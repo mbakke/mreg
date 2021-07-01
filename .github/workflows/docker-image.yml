@@ -36,7 +36,7 @@ jobs:
         run: guix build --fallback -m ./ci/manifest.scm
       - name: Pack Docker image
         run: >
-          guix pack --fallback -f docker --save-provenance --root=mreg-docker.tar.gz
+          guix pack --fallback -f docker --root=mreg-docker.tar.gz
           -S /app=app -S /etc/profile=etc/profile
           --entry-point=bin/mreg-wrapper
           -m ./ci/manifest.scm
