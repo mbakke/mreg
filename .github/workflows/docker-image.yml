@@ -29,7 +29,7 @@ jobs:
           cat ci/channels.scm >> $GITHUB_ENV
           echo EOF >> $GITHUB_ENV
       - name: Install Guix
-        uses: PromyLOPH/guix-install-action@v1
+        uses: mbakke/guix-install-action@output
         with:
           channels: "${{ env.CHANNELS }}"
       - name: Build mreg
@@ -45,6 +45,16 @@ jobs:
         with:
           name: mreg-docker.tar.gz
           path: mreg-docker.tar.gz
+      - name: Save channels
+        run: |
+          cat <<EOF > ${{ runner.temp }}/channels.scm
+          ${{ steps.install-guix.outputs.channels }}
+          EOF
+      - name: Upload channels
+        uses: actions/upload-artifact@v2
+        with:
+          name: channels.scm
+          path: ${{ runner.temp }}/channels.scm
       # While we have Guix, save mreg-cli and its tests for later use.
       - name: Pack mreg-cli
         run: guix pack --fallback -RR --root=mreg-cli.tar.gz -S /bin=bin mreg-cli
@@ -64,9 +74,55 @@ jobs:
           name: testsuite
           path: testsuite
 
+  reproducibility:
+    name: Verify reproducibility
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out Repo
+        uses: actions/checkout@v2
+      - name: Guix cache
+        uses: actions/cache@v2
+        with:
+          # Note: /gnu/store may exceed the limit of 5GiB, so don't
+          # cache it.  TODO: Selective caching with 'guix archive'?
+          path: |
+            ~/.cache/guix
+          key: guix-cache-${{ github.sha }}
+          restore-keys: |
+            guix-cache-
+      - name: Download channels
+        uses: actions/download-artifact@v2
+        with:
+          name: channels.scm
+      - name: Read channels.scm
+        run: |
+          echo "CHANNELS<<EOF" >> $GITHUB_ENV
+          cat channels.scm >> $GITHUB_ENV
+          echo EOF >> $GITHUB_ENV
+      - name: Install Guix
+        uses: mbakke/guix-install-action@output
+        with:
+          channels: "${{ env.CHANNELS }}"
+      - name: Build mreg
+        run: guix build --fallback -m ./ci/manifest.scm
+      - name: Pack Docker image
+        run: >
+          guix pack --fallback -f docker
+          --root=mreg-docker-again.tar.gz
+          -S /app=app -S /etc/profile=etc/profile
+          --entry-point=bin/mreg-wrapper
+          -m ./ci/manifest.scm
+      - name: Download previous image
+        uses: actions/download-artifact@v2
+        with:
+          name: mreg-docker.tar.gz
+      - name: Check that files are identical
+        run: cmp -s mreg-docker.tar.gz mreg-docker-again.tar.gz
+
   publish:
     name: Publish
-    needs: build
+    needs: reproducibility
     runs-on: ubuntu-latest
     permissions:
       packages: write
