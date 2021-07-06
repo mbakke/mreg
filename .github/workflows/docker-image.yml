@@ -85,8 +85,6 @@ jobs:
       - name: Guix cache
         uses: actions/cache@v2
         with:
-          # Note: /gnu/store may exceed the limit of 5GiB, so don't
-          # cache it.  TODO: Selective caching with 'guix archive'?
           path: |
             ~/.cache/guix
           key: guix-cache-${{ github.sha }}
@@ -110,6 +108,7 @@ jobs:
       - name: Pack Docker image
         run: >
           guix pack --fallback -f docker
+          --save-provenance
           --root=mreg-docker-again.tar.gz
           -S /app=app -S /etc/profile=etc/profile
           --entry-point=bin/mreg-wrapper
@@ -118,8 +117,19 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: mreg-docker.tar.gz
+      - name: Install diffoscope
+        run: guix package -p ${{ runner.temp }}/diffoscope install diffoscope
       - name: Check that files are identical
-        run: cmp -s mreg-docker.tar.gz mreg-docker-again.tar.gz
+        run: >
+          ${{ runner.temp }}/diffoscope/bin/diffoscope
+          mreg-docker.tar.gz mreg-docker-again.tar.gz
+          > diffoscope.log
+      - name: Upload diffoscope output
+        if: failure()
+        uses: actions/upload-artifact@v2
+        with:
+          name: diffoscope.log
+          path: diffoscope.log
 
   publish:
     name: Publish
