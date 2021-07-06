@@ -29,6 +29,7 @@ jobs:
           cat ci/channels.scm >> $GITHUB_ENV
           echo EOF >> $GITHUB_ENV
       - name: Install Guix
+        id: install-guix
         uses: mbakke/guix-install-action@output
         with:
           channels: "${{ env.CHANNELS }}"
@@ -75,7 +76,7 @@ jobs:
           path: testsuite
 
   reproducibility:
-    name: Verify reproducibility
+    name: Reproduce
     needs: build
     runs-on: ubuntu-latest
     steps:
