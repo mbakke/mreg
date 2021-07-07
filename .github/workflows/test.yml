@@ -4,6 +4,7 @@ on:
       - 'ci/**'
 
   pull_request:
+  workflow_dispatch:
 
 name: CI
 jobs:
