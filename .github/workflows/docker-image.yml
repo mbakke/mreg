@@ -118,7 +118,7 @@ jobs:
         with:
           name: mreg-docker.tar.gz
       - name: Install diffoscope
-        run: guix package -p ${{ runner.temp }}/diffoscope install diffoscope
+        run: guix package -p ${{ runner.temp }}/diffoscope -i diffoscope
       - name: Check that files are identical
         run: >
           ${{ runner.temp }}/diffoscope/bin/diffoscope
